@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
 import { db, jobsTable, violationsTable, activityTable } from "@workspace/db";
 import { eq, desc, and, SQL } from "drizzle-orm";
 import {
@@ -8,8 +9,20 @@ import {
   ApproveJobParams,
   RejectJobParams,
 } from "@workspace/api-zod";
+import { logger } from "../lib/logger";
 
 const router = Router();
+
+const MAX_CONCURRENT_ANALYSES = 10;
+let activeAnalyses = 0;
+
+const jobSubmitRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Too many job submissions. Please wait before submitting again." },
+});
 
 function formatJob(job: typeof jobsTable.$inferSelect, violations: typeof violationsTable.$inferSelect[]) {
   return {
@@ -57,28 +70,47 @@ router.get("/", async (req, res) => {
   res.json(jobs.map(j => formatJob(j, [])));
 });
 
-router.post("/", async (req, res) => {
-  const body = CreateJobBody.parse(req.body);
-  const [job] = await db.insert(jobsTable).values({
-    title: body.title,
-    youtubeUrl: body.youtubeUrl ?? null,
-    duration: body.duration ?? null,
-    status: "queued",
-    riskScore: 0,
-  }).returning();
+router.post("/", jobSubmitRateLimit, async (req, res) => {
+  if (activeAnalyses >= MAX_CONCURRENT_ANALYSES) {
+    res.status(503).json({ error: "Analysis queue is full. Please try again later." });
+    return;
+  }
 
-  await db.insert(activityTable).values({
-    jobId: job.id,
-    jobTitle: job.title,
-    eventType: "submitted",
-    message: `Video "${job.title}" submitted for analysis`,
-    riskScore: null,
-  });
+  // Claim a slot immediately — before any awaited work — so concurrent
+  // requests that pass the check above cannot exceed the cap.
+  activeAnalyses++;
 
-  // Simulate async processing
-  simulateAnalysis(job.id, job.title).catch(() => {});
+  try {
+    const body = CreateJobBody.parse(req.body);
+    const [job] = await db.insert(jobsTable).values({
+      title: body.title,
+      youtubeUrl: body.youtubeUrl ?? null,
+      duration: body.duration ?? null,
+      status: "queued",
+      riskScore: 0,
+    }).returning();
 
-  res.status(201).json(formatJob(job, []));
+    await db.insert(activityTable).values({
+      jobId: job.id,
+      jobTitle: job.title,
+      eventType: "submitted",
+      message: `Video "${job.title}" submitted for analysis`,
+      riskScore: null,
+    });
+
+    // Hand off to background task; slot released when analysis finishes or errors.
+    simulateAnalysis(job.id, job.title).catch((err) => {
+      logger.error({ err, jobId: job.id }, "simulateAnalysis failed");
+    }).finally(() => {
+      activeAnalyses--;
+    });
+
+    res.status(201).json(formatJob(job, []));
+  } catch (err) {
+    // Setup failed before simulateAnalysis was launched — release the slot now.
+    activeAnalyses--;
+    throw err;
+  }
 });
 
 router.get("/:id", async (req, res) => {

@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "YouTube Sentinel"
+version = "1.0.0"
+id = "artifacts/sentinel"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 8081
+
+[services.development]
+run = "bash /home/runner/workspace/artifacts/sentinel/start-dev.sh"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/sentinel", "run", "build" ]
+publicDir = "artifacts/sentinel/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "8081"
+BASE_PATH = "/"

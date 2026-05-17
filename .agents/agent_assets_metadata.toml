@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "eFrXEZVjywIHHOopNg98y"
+uri = "file://artifacts/sentinel/src/assets/hero-visualization.png"
+type = "image"
+title = "Futuristic data pipeline visualization"

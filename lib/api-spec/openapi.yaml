@@ -3,13 +3,19 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: YouTube Sentinel — Video pre-moderation engine API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: jobs
+    description: Video analysis jobs
+  - name: violations
+    description: Policy violations detected in videos
+  - name: dashboard
+    description: Dashboard aggregates and stats
 paths:
   /healthz:
     get:
@@ -24,6 +30,213 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List all analysis jobs
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [queued, processing, completed, failed, flagged]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
+    post:
+      operationId: createJob
+      tags: [jobs]
+      summary: Submit a new video for analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobInput"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+
+  /jobs/{id}:
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: Get a single job with full analysis results
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Not found
+
+  /jobs/{id}/approve:
+    post:
+      operationId: approveJob
+      tags: [jobs]
+      summary: Approve a flagged video for publishing
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Not found
+
+  /jobs/{id}/reject:
+    post:
+      operationId: rejectJob
+      tags: [jobs]
+      summary: Reject a flagged video
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Not found
+
+  /violations:
+    get:
+      operationId: listViolations
+      tags: [violations]
+      summary: List all violations across all jobs
+      parameters:
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [visual, audio, metadata, contextual]
+        - in: query
+          name: severity
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: List of violations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Violation"
+
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Overall system statistics
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /dashboard/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [dashboard]
+      summary: Recent job activity feed
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityEvent"
+
+  /dashboard/risk-distribution:
+    get:
+      operationId: getRiskDistribution
+      tags: [dashboard]
+      summary: Distribution of risk scores across processed videos
+      responses:
+        "200":
+          description: Risk score distribution
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RiskBucket"
+
+  /dashboard/violation-breakdown:
+    get:
+      operationId: getViolationBreakdown
+      tags: [dashboard]
+      summary: Violation counts grouped by category
+      responses:
+        "200":
+          description: Violation breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ViolationCategoryCount"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +247,145 @@ components:
       required:
         - status
 
+    Job:
+      type: object
+      required: [id, title, status, riskScore, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        youtubeUrl:
+          type: ["string", "null"]
+        thumbnailUrl:
+          type: ["string", "null"]
+        duration:
+          type: ["integer", "null"]
+          description: Duration in seconds
+        status:
+          type: string
+          enum: [queued, processing, completed, failed, flagged, approved, rejected]
+        riskScore:
+          type: number
+          description: 0-100 risk score
+        analysisStage:
+          type: ["string", "null"]
+          description: Current processing stage
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Violation"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    JobInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        youtubeUrl:
+          type: string
+        duration:
+          type: integer
+
+    Violation:
+      type: object
+      required: [id, jobId, category, severity, rule, description, confidence, createdAt]
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        category:
+          type: string
+          enum: [visual, audio, metadata, contextual]
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        rule:
+          type: string
+        description:
+          type: string
+        confidence:
+          type: number
+          description: 0-1 confidence score
+        timestampStart:
+          type: ["number", "null"]
+          description: Start time in seconds
+        timestampEnd:
+          type: ["number", "null"]
+          description: End time in seconds
+        autoFixAvailable:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    DashboardStats:
+      type: object
+      required: [totalJobs, pendingReview, flaggedToday, approvedToday, avgRiskScore, avgProcessingTime, topViolationCategory]
+      properties:
+        totalJobs:
+          type: integer
+        pendingReview:
+          type: integer
+        flaggedToday:
+          type: integer
+        approvedToday:
+          type: integer
+        avgRiskScore:
+          type: number
+        avgProcessingTime:
+          type: number
+          description: Average processing time in seconds
+        topViolationCategory:
+          type: string
+
+    ActivityEvent:
+      type: object
+      required: [id, jobId, jobTitle, eventType, message, createdAt]
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        jobTitle:
+          type: string
+        eventType:
+          type: string
+          enum: [submitted, started, completed, flagged, approved, rejected, failed]
+        message:
+          type: string
+        riskScore:
+          type: ["number", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    RiskBucket:
+      type: object
+      required: [range, count, label]
+      properties:
+        range:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+
+    ViolationCategoryCount:
+      type: object
+      required: [category, count, percentage]
+      properties:
+        category:
+          type: string
+        count:
+          type: integer
+        percentage:
+          type: number
